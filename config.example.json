@@ -1,0 +1,65 @@
+{
+  "official": {
+    "name": "官方GPT",
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "sk-REPLACE_WITH_YOUR_OFFICIAL_KEY",
+    "model_name": "gpt-4o",
+    "api_style": "chat"
+  },
+  "unknown": {
+    "name": "未知API",
+    "base_url": "https://your-unknown-endpoint.example.com/v1",
+    "api_key": "sk-REPLACE_WITH_UNKNOWN_KEY",
+    "model_name": "gpt-4o",
+    "api_style": "chat"
+  },
+  "options": {
+    "output_dir": "output",
+    "seed": 20240517,
+    "request_timeout": 90,
+    "concurrent": true,
+    "parallel_phases": true,
+    "auto_ratelimit": true,
+    "rate_limit_rpm": 120,
+    "fallback_tpm": 30000,
+    "max_inflight": 4,
+    "baseline_self": true,
+    "baseline_diff_model": "",
+    "cache_official": true,
+    "proxy": "",
+    "phase1": {
+      "temperature": 0.0,
+      "max_tokens": 512
+    },
+    "phase2": {
+      "temperature": 1.0,
+      "samples": 3,
+      "upsample": true,
+      "num_probes": 20,
+      "skip_ids": [],
+      "suffix_min_len": 40,
+      "suffix_max_len": 60,
+      "max_tokens": 96
+    },
+    "phase3": {
+      "max_tokens": 32,
+      "top_logprobs": 5
+    },
+    "phase4": {
+      "temperature": 0.0,
+      "max_tokens": 256
+    },
+    "phase5": {
+      "temperature": 1.0,
+      "samples": 8,
+      "max_tokens": 200
+    },
+    "phase6": {
+      "temperature": 0.0,
+      "samples": 4,
+      "max_tokens": 1,
+      "num_probes": 0,
+      "timeout": 30
+    }
+  }
+}
