@@ -1,7 +1,7 @@
 """身份一致性红旗检测（借鉴 mintesnot-teshome/llm-verify 的思路）。
 
-零额外请求：直接复用第一阶段的取证数据（自我认知类 prompt 的回答 + 延迟），
-检测五类红旗：
+零额外请求：直接复用第一阶段或第二阶段的取证数据（自我认知类 prompt 的回答 + 延迟 + token usage），
+检测八类红旗：
   1. 知识截止声明矛盾 —— 同一 API 在多个回答中给出不同的截止声明
      （语境限定提取：只认"截止/训练数据"措辞附近的年份，过滤无关年份；
        另做"同一品牌下的跨端系统性偏差"检查——不同模型的截止日期本就
@@ -13,6 +13,10 @@
   5. 拒答模式不一致 —— 官方与未知在"拒答模式类"探测上的 refuse/comply
      行为不一致（思路参考模型替代审计工作：自我声称不可靠，
      行为画像（含拒答/护栏行为）是判别证据；不同护栏层会改变拒答模式）
+  6. 代理/中继自我披露 —— 出现 proxy/relay 等词
+  7. 失败率不对称 —— 未知 API 阶段二失败率明显偏高
+  8. Token 用量不对称 —— prompt_tokens 比值 >1.3（疑似隐藏 system prompt 注入）、
+     completion_tokens 比值 >1.5（疑似附加输出/水印）、或未知端存在 reasoning_tokens（推理型模型替换）
 
 红旗是"辅助信号"而非证据：同源结论成立时红旗不影响判定，但会在报告中
 明确标注，提醒用户复核。
@@ -22,6 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from statistics import mean
+from typing import Any
 
 # 品牌强词：出现在自我认知回答中但不符合请求型号品牌时触发红旗。
 # 故意不含 "gpt/openai/chatgpt" —— 其他模型也常提及这些词，判别力低。
@@ -113,6 +118,9 @@ class RedFlagsResult:
     identity_votes_a: dict[str, int] = field(default_factory=dict)  # 官方自称品牌票数
     identity_votes_b: dict[str, int] = field(default_factory=dict)  # 未知自称品牌票数
     refusal_match_rate: float | None = None   # 拒答模式一致性（0~1；None=无数据）
+    prompt_tokens_ratio: float = 0.0          # 未知端 prompt_tokens / 官方端 prompt_tokens
+    completion_tokens_ratio: float = 0.0      # 未知端 completion_tokens / 官方端 completion_tokens
+    has_reasoning_asymmetry: bool = False     # 存在 reasoning_tokens 而官方没有
 
     @property
     def has_flags(self) -> bool:
@@ -179,13 +187,150 @@ def _vote_brands(claims: list[str]) -> dict[str, int]:
     return votes
 
 
+def _extract_usage_dict(val: Any) -> dict:
+    """将 usage 对象（dict / Pydantic 模型 / SimpleNamespace）提取为标准 dict。"""
+    if val is None:
+        return {}
+    if isinstance(val, dict):
+        return val
+    if hasattr(val, "model_dump"):
+        try:
+            return val.model_dump()
+        except Exception:
+            pass
+    if hasattr(val, "__dict__"):
+        return vars(val)
+    return {}
+
+
+def _get_prompt_tokens(usage: Any) -> int:
+    """提取 prompt tokens（支持 prompt_tokens 与 input_tokens）。"""
+    d = _extract_usage_dict(usage)
+    val = d.get("prompt_tokens")
+    if val is None:
+        val = d.get("input_tokens")
+    try:
+        return int(val or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _get_completion_tokens(usage: Any) -> int:
+    """提取 completion tokens（支持 completion_tokens 与 output_tokens）。"""
+    d = _extract_usage_dict(usage)
+    val = d.get("completion_tokens")
+    if val is None:
+        val = d.get("output_tokens")
+    try:
+        return int(val or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _get_reasoning_tokens(usage: Any) -> int:
+    """提取 reasoning tokens（支持顶层与 details 内嵌字段）。"""
+    d = _extract_usage_dict(usage)
+    for k in ("reasoning_tokens", "reasoning_token_count"):
+        if k in d and d[k] is not None:
+            try:
+                v = int(d[k])
+                if v > 0:
+                    return v
+            except (ValueError, TypeError):
+                pass
+    for det_key in ("completion_tokens_details", "output_tokens_details", "prompt_tokens_details"):
+        det = _extract_usage_dict(d.get(det_key))
+        for k in ("reasoning_tokens", "reasoning_token_count"):
+            if k in det and det[k] is not None:
+                try:
+                    v = int(det[k])
+                    if v > 0:
+                        return v
+                except (ValueError, TypeError):
+                    pass
+    return 0
+
+
+def check_token_usage_asymmetry(
+    official_usages: list[Any],
+    unknown_usages: list[Any],
+    prompt_ratio_threshold: float = 1.3,
+    completion_ratio_threshold: float = 1.5,
+) -> list[str]:
+    """
+    比较两端 usage 字段：
+    - prompt_tokens 比值 > 1.3 → 疑似注入隐藏 system prompt
+    - completion_tokens 比值 > 1.5 → 疑似附加输出/水印
+    - 存在 reasoning_tokens 而官方没有 → 推理型模型替换
+
+    参数:
+        official_usages: 官方端 usage 记录列表
+        unknown_usages: 未知端 usage 记录列表
+        prompt_ratio_threshold: prompt_tokens 比值阈值（默认 1.3）
+        completion_ratio_threshold: completion_tokens 比值阈值（默认 1.5）
+
+    返回:
+        触发的红旗描述列表（无异常返回空列表 []）
+    """
+    flags: list[str] = []
+    if not official_usages or not unknown_usages:
+        return flags
+
+    valid_pairs = []
+    for ua, ub in zip(official_usages, unknown_usages):
+        if ua is None and ub is None:
+            continue
+        valid_pairs.append((ua or {}, ub or {}))
+
+    if not valid_pairs:
+        return flags
+
+    total_pa = sum(_get_prompt_tokens(ua) for ua, _ in valid_pairs)
+    total_pb = sum(_get_prompt_tokens(ub) for _, ub in valid_pairs)
+
+    total_ca = sum(_get_completion_tokens(ua) for ua, _ in valid_pairs)
+    total_cb = sum(_get_completion_tokens(ub) for _, ub in valid_pairs)
+
+    total_ra = sum(_get_reasoning_tokens(ua) for ua, _ in valid_pairs)
+    total_rb = sum(_get_reasoning_tokens(ub) for _, ub in valid_pairs)
+
+    # 1) prompt_tokens 检查（疑似注入隐藏 system prompt）
+    if total_pa > 0:
+        p_ratio = total_pb / total_pa
+        if p_ratio > prompt_ratio_threshold:
+            flags.append(
+                f"未知 API prompt_tokens 消耗显著高于官方（合计 {total_pb} vs {total_pa}，"
+                f"比值 {p_ratio:.2f} > {prompt_ratio_threshold}），疑似服务端注入隐藏 system prompt"
+            )
+
+    # 2) completion_tokens 检查（疑似附加输出/水印）
+    if total_ca > 0:
+        c_ratio = total_cb / total_ca
+        if c_ratio > completion_ratio_threshold:
+            flags.append(
+                f"未知 API completion_tokens 消耗显著高于官方（合计 {total_cb} vs {total_ca}，"
+                f"比值 {c_ratio:.2f} > {completion_ratio_threshold}），疑似附加输出/水印或存在包装改写"
+            )
+
+    # 3) reasoning_tokens 检查（存在 reasoning_tokens 而官方没有 → 推理型模型替换）
+    if total_rb > 0 and total_ra == 0:
+        flags.append(
+            f"未知 API 响应 usage 中检测到 reasoning_tokens（合计 {total_rb} 个）而官方端为 0，"
+            f"疑似使用推理型模型（如 o1/DeepSeek-R1 等）进行替换"
+        )
+
+    return flags
+
+
 def detect_redflags(phase1, official_model: str, unknown_model: str,
                     phase2=None,
-                    latency_ratio_threshold: float = 3.0) -> RedFlagsResult:
-    """从第一阶段结果检测红旗。phase1 为 None（禁用）时返回空结果。
-    phase2（可选）：提供对抗探测失败率，用于"代理/网关不稳定"红旗。"""
+                    latency_ratio_threshold: float = 3.0,
+                    prompt_ratio_threshold: float = 1.3,
+                    completion_ratio_threshold: float = 1.5) -> RedFlagsResult:
+    """从第一阶段和第二阶段结果检测红旗。phase1 为 None（禁用）时返回空结果。
+    phase2（可选）：提供对抗探测失败率及 usage 数据。"""
     res = RedFlagsResult()
-    if phase1 is None or not phase1.prompts:
+    if phase1 is None or not getattr(phase1, "prompts", None):
         return res
 
     self_a = [p.text_a for p in phase1.prompts if p.category == "self_awareness"
@@ -307,4 +452,49 @@ def detect_redflags(phase1, official_model: str, unknown_model: str,
                 res.flags.append(
                     f"未知 API 阶段二失败率 {fb}/{n}（{fb / n:.0%}），"
                     f"明显高于官方（{fa}/{n}），常见于代理/网关不稳定或超时")
+
+    # 8) Token 用量不对称（复用第一阶段与第二阶段取证数据）
+    official_usages: list[Any] = []
+    unknown_usages: list[Any] = []
+    if phase1 is not None:
+        p1_rows = getattr(phase1, "prompts", []) + getattr(phase1, "reference_rows", [])
+        for p in p1_rows:
+            if not p.error_a and not p.error_b:
+                ua = getattr(p, "usage_a", None)
+                ub = getattr(p, "usage_b", None)
+                if ua is not None or ub is not None:
+                    official_usages.append(ua)
+                    unknown_usages.append(ub)
+    if phase2 is not None:
+        for r in getattr(phase2, "rows", []):
+            if not r.error_a and not r.error_b:
+                ua = getattr(r, "usage_a", None)
+                ub = getattr(r, "usage_b", None)
+                if ua is not None or ub is not None:
+                    official_usages.append(ua)
+                    unknown_usages.append(ub)
+
+    if official_usages and unknown_usages:
+        token_flags = check_token_usage_asymmetry(
+            official_usages, unknown_usages,
+            prompt_ratio_threshold=prompt_ratio_threshold,
+            completion_ratio_threshold=completion_ratio_threshold,
+        )
+        res.flags.extend(token_flags)
+
+        total_pa = sum(_get_prompt_tokens(u) for u in official_usages)
+        total_pb = sum(_get_prompt_tokens(u) for u in unknown_usages)
+        if total_pa > 0:
+            res.prompt_tokens_ratio = total_pb / total_pa
+
+        total_ca = sum(_get_completion_tokens(u) for u in official_usages)
+        total_cb = sum(_get_completion_tokens(u) for u in unknown_usages)
+        if total_ca > 0:
+            res.completion_tokens_ratio = total_cb / total_ca
+
+        total_ra = sum(_get_reasoning_tokens(u) for u in official_usages)
+        total_rb = sum(_get_reasoning_tokens(u) for u in unknown_usages)
+        if total_rb > 0 and total_ra == 0:
+            res.has_reasoning_asymmetry = True
+
     return res

@@ -273,6 +273,10 @@ def build_report(cfg, phase1, phase2, phase3, phase4, phase5, phase6,
         if redflags.refusal_match_rate is not None:
             L.append(f"  （拒答模式一致率 {redflags.refusal_match_rate:.0%}）"
                      + (" ≥75%，未触发" if redflags.refusal_match_rate >= 0.75 else ""))
+        if redflags.prompt_tokens_ratio > 0:
+            L.append(f"  （未知/官方 prompt_tokens 消耗比 {redflags.prompt_tokens_ratio:.2f}）")
+        if redflags.completion_tokens_ratio > 0:
+            L.append(f"  （未知/官方 completion_tokens 消耗比 {redflags.completion_tokens_ratio:.2f}）")
         L.append("  注: 红旗不直接改变判定，但提醒复核——真实模型不应有矛盾自述。")
     L.append("")
 
@@ -390,6 +394,12 @@ def write_report(cfg, phase1, phase2, phase3, phase4, phase5, phase6,
         if redflags is not None and redflags.latency_ratio > 0 else None,
         "refusal_match_rate": round(redflags.refusal_match_rate, 3)
         if redflags is not None and redflags.refusal_match_rate is not None else None,
+        "prompt_tokens_ratio": round(redflags.prompt_tokens_ratio, 3)
+        if redflags is not None and redflags.prompt_tokens_ratio > 0 else None,
+        "completion_tokens_ratio": round(redflags.completion_tokens_ratio, 3)
+        if redflags is not None and redflags.completion_tokens_ratio > 0 else None,
+        "has_reasoning_asymmetry": redflags.has_reasoning_asymmetry
+        if redflags is not None else False,
         "identity_votes": {
             "official": redflags.identity_votes_a if redflags is not None else {},
             "unknown": redflags.identity_votes_b if redflags is not None else {},

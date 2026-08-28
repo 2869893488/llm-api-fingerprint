@@ -217,6 +217,64 @@ def test_cutoff_redflags() -> None:
           "跨端偏差: 异品牌不触发")
 
 
+def test_token_usage_asymmetry_redflags() -> None:
+    """Token 用量不对称红旗检测自检：隐藏 system prompt / 附加输出水印 / 推理模型替换 / 容错。"""
+    from types import SimpleNamespace as NS
+    from fpcheck.redflags import check_token_usage_asymmetry, detect_redflags
+
+    # 1) prompt_tokens 不对称（比值 > 1.3 触发，<= 1.3 不触发）
+    u_off = [{"prompt_tokens": 100, "completion_tokens": 50}]
+    u_unk_p_high = [{"prompt_tokens": 140, "completion_tokens": 50}]  # ratio = 1.4
+    u_unk_p_ok = [{"prompt_tokens": 120, "completion_tokens": 50}]    # ratio = 1.2
+    f_p_high = check_token_usage_asymmetry(u_off, u_unk_p_high)
+    f_p_ok = check_token_usage_asymmetry(u_off, u_unk_p_ok)
+    check(any("prompt_tokens" in f and "隐藏 system prompt" in f for f in f_p_high),
+          "Token红旗: prompt_tokens > 1.3 触发隐藏 system prompt 注入警告")
+    check(not any("prompt_tokens" in f for f in f_p_ok),
+          "Token红旗: prompt_tokens <= 1.3 不触发")
+
+    # 2) completion_tokens 不对称（比值 > 1.5 触发，<= 1.5 不触发）
+    u_unk_c_high = [{"prompt_tokens": 100, "completion_tokens": 80}]  # ratio = 1.6
+    u_unk_c_ok = [{"prompt_tokens": 100, "completion_tokens": 70}]    # ratio = 1.4
+    f_c_high = check_token_usage_asymmetry(u_off, u_unk_c_high)
+    f_c_ok = check_token_usage_asymmetry(u_off, u_unk_c_ok)
+    check(any("completion_tokens" in f and "附加输出/水印" in f for f in f_c_high),
+          "Token红旗: completion_tokens > 1.5 触发附加输出/水印警告")
+    check(not any("completion_tokens" in f for f in f_c_ok),
+          "Token红旗: completion_tokens <= 1.5 不触发")
+
+    # 3) reasoning_tokens 不对称（未知端存在而官方端为 0 触发；两端皆有不触发）
+    u_unk_reason = [{"prompt_tokens": 100, "completion_tokens": 50,
+                     "completion_tokens_details": {"reasoning_tokens": 25}}]
+    f_reason = check_token_usage_asymmetry(u_off, u_unk_reason)
+    check(any("reasoning_tokens" in f and "推理型模型" in f for f in f_reason),
+          "Token红旗: 未知端存在 reasoning_tokens 触发推理模型替换警告")
+
+    u_off_reason = [{"prompt_tokens": 100, "completion_tokens": 50,
+                     "completion_tokens_details": {"reasoning_tokens": 25}}]
+    f_both_reason = check_token_usage_asymmetry(u_off_reason, u_unk_reason)
+    check(not any("reasoning_tokens" in f for f in f_both_reason),
+          "Token红旗: 官方端同样具备 reasoning_tokens 时不触发替换红旗")
+
+    # 4) 容错处理：None、空字典、非整数数据
+    f_empty = check_token_usage_asymmetry([None, {}], [None, {"prompt_tokens": "invalid"}])
+    check(f_empty == [], "Token红旗: 空或异常数据安全返回 []")
+
+    # 5) detect_redflags 全流程集成自检
+    p1 = NS(category="self_awareness", text_a="I am ChatGPT.", text_b="I am ChatGPT.",
+            error_a="", error_b="", latency_a=10.0, latency_b=10.0,
+            usage_a={"prompt_tokens": 100, "completion_tokens": 50},
+            usage_b={"prompt_tokens": 150, "completion_tokens": 90,
+                     "completion_tokens_details": {"reasoning_tokens": 20}})
+    rf = detect_redflags(NS(prompts=[p1]), "gpt-4o", "gpt-4o")
+    check(abs(rf.prompt_tokens_ratio - 1.5) < 1e-6,
+          f"Token红旗集成: prompt_tokens_ratio 计算正确 ({rf.prompt_tokens_ratio:.2f})")
+    check(abs(rf.completion_tokens_ratio - 1.8) < 1e-6,
+          f"Token红旗集成: completion_tokens_ratio 计算正确 ({rf.completion_tokens_ratio:.2f})")
+    check(rf.has_reasoning_asymmetry is True, "Token红旗集成: has_reasoning_asymmetry 为 True")
+    check(len(rf.flags) == 3, f"Token红旗集成: 触发全部 3 项 Token 红旗（实际 {len(rf.flags)} 项）")
+
+
 def test_adaptive_policy() -> None:
     """自动限速策略自检：响应头换算、429 退让、无回退不限速。"""
     from fpcheck.ratelimit import AdaptivePolicy
@@ -531,6 +589,7 @@ def main() -> None:
     test_run_logger()
     test_early_failure_logged()
     test_cutoff_redflags()
+    test_token_usage_asymmetry_redflags()
     global PORT_OFFICIAL, PORT_UNKNOWN_A, PORT_UNKNOWN_B, PORT_UNKNOWN_C
     global PORT_UNKNOWN_E, PORT_OFFICIAL_NOISY, PORT_UNKNOWN_F, PORT_UNKNOWN_G
     global PORT_OFFICIAL_BLANK

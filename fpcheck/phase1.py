@@ -37,6 +37,8 @@ class PromptResult:
     tokens_b: int = 0
     error_a: str = ""
     error_b: str = ""
+    usage_a: dict | None = None  # 官方 API usage 字段（红旗检测用）
+    usage_b: dict | None = None  # 未知 API usage 字段
 
 
 @dataclass
@@ -92,7 +94,8 @@ def run_phase1(official, unknown, recorder, options, log=print) -> Phase1Result:
                 similarity=sim, exact=exact, normalized=normalized,
                 latency_a=ra.latency_ms, latency_b=rb.latency_ms,
                 tokens_a=tokens_a, tokens_b=tokens_b,
-                error_a=ra.error or "", error_b=rb.error or "")
+                error_a=ra.error or "", error_b=rb.error or "",
+                usage_a=ra.usage, usage_b=rb.usage)
             (reference if is_ref else scored).append(row)
             status = "逐字一致" if exact else ("归一化一致" if normalized
                     else f"相似度={sim:.3f}")

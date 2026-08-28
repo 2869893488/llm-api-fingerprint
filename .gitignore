@@ -10,3 +10,4 @@ piptmp/
 .e2e/
 __pycache__/
 *.pyc
+test_token_usage.py

@@ -14,7 +14,7 @@
 | 六 | **单 Token 行为指纹（诊断性阶段，分数不进判定）**（借鉴 [One Token Is Enough](https://arxiv.org/abs/2607.10252) / [vivgrid/llm-fingerprinting](https://github.com/vivgrid/llm-fingerprinting)）：6 个固定短串 × 每串 4 采样（`max_tokens=1`），保留**退化现象诊断**——推理型端点（思考消耗全部输出预算，如部分 o 系/网关模型）**一经识别立即跳过**（usage 显示 reasoning_tokens ≥ output_tokens），读取通道/升级重试/不可读等如实入报告与 summary；其参考重叠率只作辅助参考（6 串 × 4 采样是时间与证据完整性的平衡点） | —（诊断） |
 | 七 | **综合判定**：**证据加权求和**——权重 × 成功率（ok/total，下限 0.5）× **CI 可靠性**再归一化；相似度类阶段（一/四/六）先做**官方自比归一化校准**（得分 ÷ self_sim，≤1 截断，自比 <0.5 或未跑时跳过）；**证据冲突规则**：加权分 >0.75 但各阶段得分跨度 >0.45（≥3 个有效阶段）→ 降级"中等怀疑"并标注冲突，多通道必须共同吻合。>0.75 高度确信；0.5～0.75 中等怀疑；<0.5 证据不足。**fail-closed 规则**（借鉴 [llm-verify](https://github.com/asale-ai/llm-verify)，原 mintesnot-teshome/llm-verify）：有效探测总数 < 8 或某阶段成功率 < 80% 时强制判定"证据不足" | — |
 
-另附**身份一致性红旗**（复用第一阶段取证，零额外请求）：知识截止声明前后矛盾（**语境限定提取**：只认"截止/训练数据"措辞附近的年份，过滤"成立于 2015 年"等无关年份；不同模型的截止日期本就不同，因此不做"两端年份必须相同"的比较，只抓同一品牌下两端截止年份的**系统性偏差**）、自我身份声称与请求型号品牌不符、两端延迟显著不对称（转发/中继层信号）、官方与未知**跨端自称品牌不一致**、**拒答模式不一致**（不同护栏/内容策略层）、**代理/中继自我披露**（自我描述或系统提示泄漏回答中出现 proxy/relay/中转/代理 等词，参考 llm-verify 的 relay provenance 检查）。红旗为辅助信号，在报告中标注但不改变判定。
+另附**身份一致性红旗**（复用第一/二阶段取证，零额外请求）：知识截止声明前后矛盾（**语境限定提取**：只认"截止/训练数据"措辞附近的年份，过滤"成立于 2015 年"等无关年份；不同模型的截止日期本就不同，因此不做"两端年份必须相同"的比较，只抓同一品牌下两端截止年份的**系统性偏差**）、自我身份声称与请求型号品牌不符、两端延迟显著不对称（转发/中继层信号）、官方与未知**跨端自称品牌不一致**、**拒答模式不一致**（不同护栏/内容策略层）、**代理/中继自我披露**（自我描述或系统提示泄漏回答中出现 proxy/relay/中转/代理 等词，参考 llm-verify 的 relay provenance 检查）、**Token 用量不对称**（prompt_tokens 比值 >1.3 疑似注入隐藏 system prompt、completion_tokens 比值 >1.5 疑似附加输出/水印、未知端存在 reasoning_tokens 提示推理型模型替换）。红旗为辅助信号，在报告中标注但不改变判定。
 
 Prompt 设计参考 [litemars/LLM-Fingerprinter](https://github.com/litemars/LLM-Fingerprinter) 的分层探测思路；成对批量探测架构参考 [praetorian-inc/julius](https://github.com/praetorian-inc/julius)（注意：julius 本身是 HTTP 层服务识别工具，本工具仅借鉴其成对探测架构）；随机 prompt 包装与指令释义扰动参考 [LLMmap](https://github.com/pasquini-dario/LLMmap)（[arXiv:2407.15847](https://arxiv.org/abs/2407.15847)，USENIX Security '25）；身份红旗、代理披露检查与 fail-closed 规则参考 [llm-verify](https://github.com/asale-ai/llm-verify)（原名 mintesnot-teshome/llm-verify：32 个取证探针，专查套壳红旗）；采样自洽性画像参考 [SelfCheckGPT](https://github.com/potsawee/selfcheckgpt)（[arXiv:2303.08896](https://arxiv.org/abs/2303.08896)，ACL 2023）；单 Token 指纹参考 [One Token Is Enough](https://arxiv.org/abs/2607.10252)（[vivgrid/llm-fingerprinting](https://github.com/vivgrid/llm-fingerprinting)，另有 [ToseaAI 的 TS 参考实现](https://github.com/ToseaAI/llm-fingerprint-detector)）；严格格式遵循探针借鉴 [Chain & Hash（Russinovich, Cai, Salem，微软）](https://arxiv.org/abs/2407.10887)（[ICLR](https://openreview.net/pdf?id=UWi94bRsgm)）——注意其全套方案需微调模型记忆哈希链，黑盒端点无法复现，本工具只吸收其"严格格式指令"维度；受约束身份审讯（单 token 约束 / 补全句 / 释义变体）参考 Noto et al.《Identifiability of Large Language Models via Reverse Engineering》(ICLR 2025)，并参考了 [LessWrong 上对 190 个模型的单 token 身份扫描实践](https://www.lesswrong.com/posts/KK5pqtrfb8XnmqLka/some-models-don-t-identify-as-their-official-name)（很多模型不回自己的正式型号名，身份自称必须配合行为画像使用）；拒答/护栏行为画像参考模型替代审计类工作（如 [Auditing Model Substitution in LLM APIs](https://arxiv.org/abs/2504.04715)，NeurIPS 2025），其结论"自我身份声称不可靠、需行为证据"与本工具的红旗定位一致。
 
@@ -38,7 +38,7 @@ api-fingerprint/
 │   ├── runner.py              # 成对批量探测执行器 + 取证记录
 │   ├── storage.py             # 原始请求/响应 JSON 取证存储
 │   ├── phase1.py / phase2.py / phase3.py / phase4.py / phase5.py / phase6.py
-│   ├── redflags.py            # 身份一致性红旗检测（复用第一阶段取证）
+│   ├── redflags.py            # 身份一致性与 Token 消耗红旗检测（复用第一/二阶段取证）
 │   ├── verdict.py             # 加权综合判定 + fail-closed 规则
 │   └── report.py              # 文本报告 + summary.json
 ├── tests/
@@ -199,7 +199,7 @@ python tests/run_mock_test.py
 | 第六阶段 单 Token 指纹（诊断参考） | 6 串 × 4 采样的重叠系数只作参考，**分数不进综合判定**；重点是保留"退化现象"：推理型端点（思考消耗全部输出预算）一经识别即跳过并注明 |
 | 对照基线 + 归一化校准 | 官方自比（同端点同模型应 ≈1，即官方侧的"噪声地板"）：**自比 ≥0.5 时将阶段一/四的相似度得分 ÷ 自比（≤1 截断）后进综合评分**——把"官方侧漂移"从同源证据里扣除；自比过低（<0.5，官方侧不稳定）或未跑时跳过校准（fail-soft）。异源对照（`baseline_diff_model`）应显著更低，仅校验指标体系 |
 | 证据可靠性 / 冲突 | 二/五/六阶段的 95% CI 越宽 → 权重自动回调（0.5～1.0）；加权分 >0.75 但阶段跨度 >0.45 → 强制降级"中等怀疑"并标注证据冲突 |
-| 身份一致性红旗 | 截止声明矛盾或跨端系统性偏差 / 自称品牌不符 / 延迟显著不对称（**已按每 token 延迟归一化**）/ 跨端自称品牌不一致 / 拒答模式不一致 / 代理中继自我披露（辅助信号，不改变判定） |
+| 身份一致性红旗 | 截止声明矛盾或跨端系统性偏差 / 自称品牌不符 / 延迟显著不对称（**已按每 token 延迟归一化**）/ 跨端自称品牌不一致 / 拒答模式不一致 / 代理中继自我披露 / Token 用量不对称（辅助信号，不改变判定） |
 
 综合评分 = 0.25×一阶段 + 0.30×二阶段 + 0.05×三阶段 + 0.10×四阶段 + 0.30×五阶段（**阶段六为诊断性阶段，分数不进评分**），各阶段权重先按**成功率（ok/total）× CI 可靠性**（下限 0.5）回调再归一化，跳过阶段自动归零重归一化：
 

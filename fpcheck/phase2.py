@@ -30,6 +30,8 @@ class ProbeRow:
     out_tokens_b: int = 0
     error_a: str = ""
     error_b: str = ""
+    usage_a: dict | None = None  # 官方 API usage 字段（红旗检测用）
+    usage_b: dict | None = None  # 未知 API usage 字段
 
 
 @dataclass
@@ -143,7 +145,8 @@ def run_phase2(official, unknown, recorder, options, log=print) -> Phase2Result:
                        texts_a=ra.texts, texts_b=rb.texts,
                        out_tokens_a=int((ra.usage or {}).get("completion_tokens") or 0),
                        out_tokens_b=int((rb.usage or {}).get("completion_tokens") or 0),
-                       error_a=ra.error or "", error_b=rb.error or "")
+                       error_a=ra.error or "", error_b=rb.error or "",
+                       usage_a=ra.usage, usage_b=rb.usage)
         if ra.ok and rb.ok:
             row.cross_sim = cross_similarity(ra.texts, rb.texts)
             row.intra_a = intra_similarity(ra.texts)
