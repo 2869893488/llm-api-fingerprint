@@ -765,13 +765,14 @@ def main() -> None:
         check(s["scores"]["phase5_similarity"] < 0.9,
               f"场景G: 第五阶段评分 < 0.9（实际 {s['scores']['phase5_similarity']}）")
 
-    # ---------------- 场景 H：默认配置（双维度并行默认开启 + 限速器生效）
-    print("\n=== 场景 H：同源全参数 + 默认双维度并行 ===", flush=True)
+    # ---------------- 场景 H：双维度并行显式开启 + 限速器生效
+    print("\n=== 场景 H：同源全参数 + 显式双维度并行 ===", flush=True)
     rc, s, out = run_scenario("H", {
         "name": "未知API-H",
         "base_url": f"http://127.0.0.1:{PORT_UNKNOWN_C}/v1",
         "api_key": "sk-unknownH", "model_name": "gpt-4o"},
-        extra_options={"rate_limit_rpm": 3600, "fallback_tpm": 0,
+        extra_options={"parallel_phases": True, "concurrent": True,
+                       "rate_limit_rpm": 3600, "fallback_tpm": 0,
                        "max_inflight": 16})
     check(rc == 0, "场景H: 退出码为 0")
     if s:

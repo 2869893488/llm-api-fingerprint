@@ -83,8 +83,8 @@ pip install -r requirements.txt
     "output_dir": "output",
     "seed": 20240517,                               // 全局随机种子（保证两次运行可复现）
     "request_timeout": 90,
-    "concurrent": true,                             // 维度一：同一探测并行打两个 API（默认开）
-    "parallel_phases": true,                        // 维度二：六个阶段并行执行（默认开）
+    "concurrent": false,                            // 维度一：同一探测并行打两个 API（默认关闭，串行依次发送）
+    "parallel_phases": false,                       // 维度二：六个阶段并行执行（默认关闭，逐阶段串行执行）
     "auto_ratelimit": true,                         // 自动限速：按端点响应头 x-ratelimit-* + 429 自适应
     "rate_limit_rpm": 120,                          // 手动固定限速；自动模式下=无额度头时的回退值
     "fallback_tpm": 30000,                          // 自动模式下无额度头时的 TPM 回退值（0 = 不限）
@@ -123,11 +123,13 @@ python run_fingerprint.py --config config.json --no-phase4
 python run_fingerprint.py --config config.json --no-phase5
 # 跳过单 Token 行为指纹阶段：
 python run_fingerprint.py --config config.json --no-phase6
-# 并行执行五个阶段（默认开启；时间≈最慢阶段，瞬时请求率更高）：
+# 并行执行六个阶段（覆盖配置里的 parallel_phases=false，时间≈最慢阶段）：
 python run_fingerprint.py --config config.json --parallel-phases
-# 强制串行执行阶段（覆盖配置里的 parallel_phases=true，限流时用）：
+# 强制串行执行阶段：
 python run_fingerprint.py --config config.json --serial
-# 同一探测改为依次发给两个 API（覆盖配置里的 concurrent=true）：
+# 开启双 API 同步并行探测（覆盖配置里的 concurrent=false）：
+python run_fingerprint.py --config config.json --concurrent
+# 同一探测依次发给两个 API（默认）：
 python run_fingerprint.py --config config.json --no-concurrent
 # 关闭分区进度面板（终端不支持 ANSI 时用，退化为普通逐行日志）：
 python run_fingerprint.py --config config.json --no-panel
@@ -139,12 +141,12 @@ python run_fingerprint.py --config config.json --resume
 
 运行流程：预检连通性/鉴权 → 逐阶段探测（进度打印到控制台）→ 身份一致性红旗检查 → 综合判定 → 自动生成 `output/report_*.txt` 与 `output/summary.json`。
 
-### 双维度并行 + 限速保护（默认同时开启）
+### 双维度并行控制与限速保护
 
-"并行"指两个维度，均**默认开启**：
+"并行"包含两个维度（**现默认关闭，按串行安全模式运行，防触发第三方严格风控**）：
 
-1. **双 API 并行**（`concurrent: true`，`--no-concurrent` 关闭）：同一探测同时发给官方与未知 API，单探测耗时 ≈ 两者中较慢者；
-2. **阶段并行**（`parallel_phases: true`，`--serial` 关闭）：一至六阶段同时推进，总时间 ≈ 最慢阶段。
+1. **双 API 并行**（`concurrent: false` 默认关闭；传 `--concurrent` 开启）：开启时同一探测同时发给官方与未知 API；关闭时依次顺序发送；
+2. **阶段并行**（`parallel_phases: false` 默认关闭；传 `--parallel-phases` 开启）：开启时一至六阶段同时推进；关闭时按阶段逐一执行。
 
 **限速保护（防触发模型并发限制）**：两维度叠加会把瞬时请求率放大约 10 倍，因此内置**全局限速器**（官方与未知共用、所有阶段共享）：
 

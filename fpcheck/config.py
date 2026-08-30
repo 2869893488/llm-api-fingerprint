@@ -30,8 +30,8 @@ class Options:
     output_dir: str = "output"
     seed: int = 20240517              # 全局随机种子（对抗后缀生成、可复现性）
     request_timeout: float = 90.0
-    concurrent: bool = True           # 维度一：同一探测同时对两个 API 发起（默认开启）
-    parallel_phases: bool = True      # 维度二：五个探测阶段并行执行（默认开启）
+    concurrent: bool = False          # 维度一：同一探测同时对两个 API 发起（默认关闭/串行）
+    parallel_phases: bool = False     # 维度二：多个探测阶段并行执行（默认关闭/串行）
     auto_ratelimit: bool = True       # 自动限速：按端点响应头 x-ratelimit-* + 429 自适应
     rate_limit_rpm: int = 120         # 手动固定限速；自动模式下为"端点未下发额度头"时的回退值
     fallback_tpm: int = 30000         # 自动模式下无额度头时的 TPM 回退值（0 = 不限）

@@ -61,9 +61,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-phase5", action="store_true", help="跳过第五阶段（采样自洽性画像）")
     p.add_argument("--no-phase6", action="store_true", help="跳过第六阶段（单 Token 行为指纹）")
     p.add_argument("--parallel-phases", action="store_true",
-                   help="显式开启并行阶段（默认已开启，此参数仅用于覆盖配置文件里的关闭设置）")
+                   help="开启并行执行阶段（覆盖配置里的 parallel_phases=false）")
     p.add_argument("--serial", action="store_true",
                    help="强制串行执行阶段（覆盖配置里的 parallel_phases=true）")
+    p.add_argument("--concurrent", action="store_true",
+                   help="同一探测同时发给两个 API（覆盖配置里的 concurrent=false）")
     p.add_argument("--no-concurrent", action="store_true",
                    help="同一探测改为依次发给两个 API（覆盖配置里的 concurrent=true）")
     p.add_argument("--no-panel", action="store_true",
@@ -150,6 +152,8 @@ def main() -> None:
         cfg.options.parallel_phases = True
     if args.serial:
         cfg.options.parallel_phases = False
+    if args.concurrent:
+        cfg.options.concurrent = True
     if args.no_concurrent:
         cfg.options.concurrent = False
     if args.no_cache_official:
