@@ -317,6 +317,8 @@ def build_report(cfg, phase1, phase2, phase3, phase4, phase5, phase6,
              "第二阶段置信区间整体偏高（>0.9）时结论更可信。")
     L.append("  * 原始取证数据（每次调用的 prompt、完整响应、时间戳、端点）"
              "保存在 raw/ 目录，可用于复核与复现。")
+    L.append("  * 免责声明：本工具仅用于技术研究与合规验证，因探测行为导致的目标 API "
+             "账号封禁、Key 停用或额度损失，作者概不负责。")
     L.append(_rule("="))
     return "\n".join(L)
 
